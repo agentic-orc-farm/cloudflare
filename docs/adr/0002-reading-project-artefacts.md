@@ -16,7 +16,8 @@ ADR 0012 of the orchestrator left this open.
 - A second GitHub App, owned by the organisation, with only `Actions: Read` and `Metadata: Read`, no webhook, installed on all the organisation's repositories.
   Its Client ID is the repository variable `PLANE_READER_CLIENT_ID`; its private key is the secret `PLANE_READER_PRIVATE_KEY` of this repository only.
 - For `apply` only, the workflow mints an installation token with `actions/create-github-app-token`, limited to the one project repository and to `actions: read`. It expires within an hour.
-- The shim finds the artefact by the component's `artefact` name and the commit (`workflow_run.head_sha`), skipping expired ones, and takes the newest. It does not require the CI run to have finished: the driver asks for a deploy only once CI is green.
+- The shim finds the artefact by the component's `artefact` name and the commit (`workflow_run.head_sha`), skipping expired ones and ones from runs started from a fork (`workflow_run.head_repository_id` differs from `workflow_run.repository_id`), and takes the newest.
+  It does not require the CI run to have finished or to have passed: the newest matching artefact wins even if its run later failed. The driver asks for a deploy only once CI is green for the commit, so a failed run's artefact is deployed only if the driver asks for that commit anyway.
 - `plan` reads no artefacts and mints no token, so it works before a commit has been packaged, as at the design gate.
 
 ## Alternatives
@@ -30,7 +31,8 @@ ADR 0012 of the orchestrator left this open.
 
 - The owner creates and installs one more App, once.
 - Promoting a commit older than the project's artefact retention (90 days by default) fails with a message saying so.
-- The plane trusts the driver to have checked CI before asking for an apply.
+- The plane trusts the driver to have checked CI before asking for an apply; the plane itself would deploy an artefact from a run that failed after uploading it.
+- A pull request from a branch of this repository runs that branch's code in the CI `acceptance` job with this repository's secrets, before any review: the account-wide `Workers Scripts: Edit` token and the App key that can read every project's Actions. So anyone who can push a branch here can change any Worker in the account and read any project's artefacts. Only the owner and the driver's App push here, and branch protection keeps it so; the README says this beside the note that fork pull requests get no secrets.
 - This repository's CI depends on artefacts being listed while their run is still in progress (documented for `upload-artifact` v4 and later).
 
 ## What enforces it
