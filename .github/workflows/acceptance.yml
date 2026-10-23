@@ -1,0 +1,67 @@
+# The live acceptance criteria, for one reviewed commit, when the driver asks ("Deploy once").
+# Dispatched on main, so the definition that receives the secrets is a merged one; it checks out `commit`
+# and runs that commit's tests. Inputs reach commands only through env: (AC4).
+name: acceptance
+run-name: acceptance ${{ inputs.commit }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: The full sha of the reviewed commit whose live acceptance criteria to run
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acceptance
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check the commit is 40 lowercase hexadecimal characters
+        env:
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          if ! [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "commit must be 40 lowercase hexadecimal characters, the full sha of a reviewed commit" >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: make setup
+      - name: Mint a read-only token for this repository's artefacts
+        id: reader
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.PLANE_READER_CLIENT_ID }}
+          private-key: ${{ secrets.PLANE_READER_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: read
+      - name: Run the acceptance criteria, live
+        env:
+          ACCEPTANCE_LIVE: "1"
+          ACCEPTANCE_PROJECT: ${{ github.repository }}
+          ACCEPTANCE_COMMIT: ${{ inputs.commit }}
+          PLANE_ORG: ${{ github.repository_owner }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ACCESS_OWNER_EMAIL: ${{ secrets.ACCESS_OWNER_EMAIL }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          GITHUB_READ_TOKEN: ${{ steps.reader.outputs.token }}
+        run: make acceptance
