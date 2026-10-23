@@ -22,7 +22,9 @@ Without a guard, the second project's apply would silently replace the first pro
 - **Every Worker records its owner.** The deployment marker (ADR 0003) starts `orc project=<owner/repo>`. A Worker's owner is the project in the newest marked deployment the deployments API lists.
 - **A name is held by the first project to deploy it.** A plan or apply for a Worker that exists and belongs to another project is refused, before anything is deployed, with the line `<component>: Worker <worker> belongs to <owner/repo>` and the advice to rename the component. A Worker that exists with no plane marker is refused the same way (`was not deployed by the plane`), because the plane cannot tell whose it is.
 - A project's Workers are found by listing names that start with `<repo>-` and end with `-<env>` and keeping those whose marker names the project. The prefix alone is not enough, because it also matches projects such as `<repo>-admin`.
-- Later kinds and the Access objects of increment 2 follow the same naming pattern and carry the owning project where Cloudflare lets them (in a name, tag or description), and are checked for ownership the same way.
+- A private Worker's Access application is named `<worker>` and found by its `worker` destination, not by name (ADR 0004). It needs no owner of its own: the Worker's owner check runs first, so the plane never touches the application of another project's Worker.
+- The two shared Access policies are `orc-plane-service-token` and `orc-plane-owner`, and the service token the owner makes is `orc-plane-tests`. The `orc-plane-` prefix marks what the plane uses; renaming any of them orphans it.
+- Later kinds follow the same naming pattern and carry the owning project where Cloudflare lets them (in a name, tag or description), and are checked for ownership the same way.
 
 ## Alternatives
 
@@ -38,9 +40,9 @@ Without a guard, the second project's apply would silently replace the first pro
 - Two colliding projects whose very first applies race each other could both see no Worker and both deploy, because the concurrency group is per project. The runbook says how to spot and fix it.
 - Renaming a repository or a component creates a new Worker and leaves the old one; the runbook says how to remove it.
 - A project with a long repository name must use short component names.
-- This repository's own CI fixture is `cloudflare-fixture-web-prod`; CI also asks for the same name as the project `cloudflare-fixture` with component `web`, to show the refusal.
+- This repository's own fixtures are `cloudflare-fixture-web-prod` and `cloudflare-fixture-web-dev`; the `acceptance` workflow also asks for the prod name as the project `cloudflare-fixture` with component `web`, to show the refusal.
 
 ## What enforces it
 
 - Unit tests of the naming function and of the owner check (another project, no marker, a rollback after a marked deployment).
-- Acceptance criteria AC5, AC9 and AC24 (the name and the refusals), AC17 and AC19 (the address of a real Worker), and AC29 and AC30 (a plan and an apply onto a Worker another project owns are refused, and its active deployment does not change).
+- Acceptance criteria AC5, AC9, AC24 and AC31 (the name and the refusals), AC17, AC19, AC35 and AC36 (the address of a real Worker, public and private), AC39 and AC40 (the Access objects' names), and AC29 and AC30 (a plan and an apply onto a Worker another project owns are refused, and its active deployment does not change).
