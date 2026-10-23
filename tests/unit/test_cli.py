@@ -139,3 +139,11 @@ def test_services_from_the_environment_keep_the_other_secrets_from_wrangler() ->
     for name in ("GITHUB_READ_TOKEN", "ACCESS_OWNER_EMAIL", "CF_ACCESS_CLIENT_SECRET"):
         assert name not in services.wrangler_environment
     assert services.wrangler.parts[-3:] == ("node_modules", ".bin", "wrangler")
+
+
+def test_httpx_request_logs_are_silenced_because_their_urls_hold_the_account_id(tmp_path: Path) -> None:
+    import logging
+
+    logging.getLogger("httpx").setLevel(logging.NOTSET)
+    main(["wrangler-config", "--project", PROJECT, "--env", "dev", "--component", json.dumps(SITE), "--assets", "x"])
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING

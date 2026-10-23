@@ -5,7 +5,7 @@ import httpx
 import pytest
 from tests.helpers import COMMIT, PROJECT, READ_TOKEN, FakeGitHub, zip_bytes
 
-from cf_plane.artefacts import ArtefactError, GitHubArtefacts, unpack
+from cf_plane.artefacts import Artefact, ArtefactError, GitHubArtefacts, unpack
 
 
 def github(fake: FakeGitHub) -> GitHubArtefacts:
@@ -112,3 +112,25 @@ def test_a_file_that_is_not_a_zip_is_refused(tmp_path: Path) -> None:
     archive.write_bytes(b"not a zip")
     with pytest.raises(ArtefactError, match="zip"):
         unpack(archive, tmp_path / "out")
+
+
+def test_a_download_served_without_a_redirect_is_written_as_it_is(tmp_path: Path) -> None:
+    def direct(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=zip_bytes({"index.html": "direct"}))
+
+    client = GitHubArtefacts(READ_TOKEN, transport=httpx.MockTransport(direct))
+    archive = client.download(PROJECT, Artefact(id=1, name="site", created_at=""), tmp_path / "site.zip")
+    assert zipfile.ZipFile(archive).read("index.html") == b"direct"
+
+
+def test_a_storage_failure_names_the_artefact_and_status(tmp_path: Path) -> None:
+    def failing_storage(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.github.com":
+            return httpx.Response(302, headers={"location": "https://storage.example.net/blobs/1"})
+        return httpx.Response(503)
+
+    client = GitHubArtefacts(READ_TOKEN, transport=httpx.MockTransport(failing_storage))
+    with pytest.raises(ArtefactError) as caught:
+        client.download(PROJECT, Artefact(id=1, name="site", created_at=""), tmp_path / "site.zip")
+    assert "site" in str(caught.value)
+    assert "503" in str(caught.value)
