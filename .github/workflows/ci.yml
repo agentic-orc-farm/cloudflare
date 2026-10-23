@@ -1,0 +1,46 @@
+# Checks every push without secrets (AC33), and packages the plane's own fixture project for the commit.
+# The live acceptance criteria run only in acceptance.yml, dispatched for a reviewed commit.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: make setup
+      - run: make check
+      - run: make test
+      # The offline criteria; the live ones skip because ACCEPTANCE_LIVE is not set.
+      - run: make acceptance
+
+  fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Package the fixture site for the commit under test
+        env:
+          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: make fixture-site OUT="$RUNNER_TEMP/fixture-site"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fixture-site
+          path: ${{ runner.temp }}/fixture-site
+          if-no-files-found: error

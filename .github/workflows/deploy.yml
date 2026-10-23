@@ -1,0 +1,103 @@
+# The plane's contract with every project's driver: plan or apply one project's components for one environment,
+# and upload result.json as the artefact `result`. Started only by workflow_dispatch, which needs write access to
+# this repository. Inputs reach commands only through env: (AC4), so a crafted input cannot become shell.
+name: deploy
+run-name: deploy ${{ inputs.mode }} ${{ inputs.project }} ${{ inputs.env }} ${{ inputs.commit }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: The project to deploy, owner/repo, in this repository's organisation
+        required: true
+        type: string
+      commit:
+        description: The full sha of the commit whose artefacts to deploy
+        required: true
+        type: string
+      env:
+        description: The environment
+        required: true
+        type: choice
+        options: [dev, staging, prod]
+      mode:
+        description: plan reports what would change and changes nothing; apply makes the changes
+        required: true
+        type: choice
+        options: [plan, apply]
+      components:
+        description: A JSON list of the project's deploy.yaml entries for this plane (name, kind, plane, artefact)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Two applies for one project and environment never overlap, which is what makes "never duplicates" hold.
+concurrency:
+  group: deploy-${{ inputs.project }}-${{ inputs.env }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: make setup
+      # Reads only PLANE_ORG and ACCESS_OWNER_EMAIL; on a refusal it writes result.json and fails the run.
+      - name: Validate the inputs
+        id: validate
+        env:
+          PROJECT: ${{ inputs.project }}
+          COMMIT: ${{ inputs.commit }}
+          ENVIRONMENT: ${{ inputs.env }}
+          MODE: ${{ inputs.mode }}
+          COMPONENTS: ${{ inputs.components }}
+          PLANE_ORG: ${{ github.repository_owner }}
+          ACCESS_OWNER_EMAIL: ${{ secrets.ACCESS_OWNER_EMAIL }}
+        run: |
+          repo="$(uv run cf-plane validate --project "$PROJECT" --commit "$COMMIT" --env "$ENVIRONMENT" \
+            --mode "$MODE" --components "$COMPONENTS" --result result.json)"
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+      # Only an apply reads artefacts: a read-only token for the one project repository, expiring within an hour.
+      - name: Mint a read-only token for the project's artefacts
+        id: reader
+        if: inputs.mode == 'apply'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.PLANE_READER_CLIENT_ID }}
+          private-key: ${{ secrets.PLANE_READER_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ steps.validate.outputs.repo }}
+          permission-actions: read
+      - name: Plan or apply
+        env:
+          PROJECT: ${{ inputs.project }}
+          COMMIT: ${{ inputs.commit }}
+          ENVIRONMENT: ${{ inputs.env }}
+          MODE: ${{ inputs.mode }}
+          COMPONENTS: ${{ inputs.components }}
+          PLANE_ORG: ${{ github.repository_owner }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ACCESS_OWNER_EMAIL: ${{ secrets.ACCESS_OWNER_EMAIL }}
+          GITHUB_READ_TOKEN: ${{ steps.reader.outputs.token }}
+        run: |
+          uv run cf-plane deploy --project "$PROJECT" --commit "$COMMIT" --env "$ENVIRONMENT" \
+            --mode "$MODE" --components "$COMPONENTS" --result result.json
+      - name: Upload result.json
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: result
+          path: result.json
+          if-no-files-found: ignore
